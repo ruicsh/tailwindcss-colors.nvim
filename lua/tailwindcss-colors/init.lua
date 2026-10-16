@@ -62,6 +62,11 @@ end
 -- Maps each attached buffer to its tailwindcss lsp client (one client per project root)
 local ATTACHED_BUFFERS = {}
 
+-- Buffers that currently have an nvim_buf_attach listener installed. This is
+-- tracked separately from ATTACHED_BUFFERS because a manual detach keeps the
+-- listener alive until the buffer unloads (or the next change removes it).
+local HOOKED_BUFFERS = {}
+
 local function buf_set_highlights(bufnr, lsp_data, change_data)
    -- set the range to the entire buffer if there is no change_data
    local firstline, new_lastline = 0, -1
@@ -185,34 +190,49 @@ function M.update_highlight(bufnr, change_data)
    end, bufnr)
 end
 
--- This function attaches to a buffer, updating highlights on change
-function M.buf_attach(bufnr)
+-- This function attaches to a buffer, updating highlights on change.
+-- `client` is optional; when passed (e.g. by the LspAttach autocmd) it is used
+-- directly, so we don't have to guess which client just attached.
+function M.buf_attach(bufnr, client)
    bufnr = expand_bufnr(bufnr)
 
-   -- if we have already attached to this buffer do nothing
-   if ATTACHED_BUFFERS[bufnr] then
+   -- don't attach to non-normal buffers (nofile, quickfix, help, terminal,
+   -- prompt, ...) since the lsp client can't reliably highlight them
+   if vim.bo[bufnr].buftype ~= "" then
       return
    end
 
-   -- find the tailwindcss client attached to THIS buffer (there may be several,
-   -- one per project root, so we can't cache a single global client)
+   -- prefer the client handed to us; otherwise find the tailwindcss client
+   -- attached to THIS buffer (there may be several, one per project root, so
+   -- we can't cache a single global client)
    local tailwind_lsp_client
-   for _, client in ipairs(vim.lsp.get_clients { buffer = bufnr }) do
-      if client.name == "tailwindcss" then
-         tailwind_lsp_client = client
-         break
+   if client and client.name == "tailwindcss" then
+      tailwind_lsp_client = client
+   else
+      for _, c in ipairs(vim.lsp.get_clients { buffer = bufnr }) do
+         if c.name == "tailwindcss" then
+            tailwind_lsp_client = c
+            break
+         end
       end
    end
 
    -- if we couldn't find it, don't attach
    if not tailwind_lsp_client then
-      vim.notify "tailwindcss-colors: can't find tailwindcss lsp client at all (you sure it's loaded?)"
+      notify "tailwindcss-colors: can't find tailwindcss lsp client at all (you sure it's loaded?)"
       return
    end
 
    -- if current buffer is not attached to the client, do nothing
    if not vim.lsp.buf_is_attached(bufnr, tailwind_lsp_client.id) then
-      vim.notify "tailwindcss-colors: current buffer is not attached to tailwindcss lsp client"
+      notify "tailwindcss-colors: current buffer is not attached to tailwindcss lsp client"
+      return
+   end
+
+   local existing_client = ATTACHED_BUFFERS[bufnr]
+
+   -- if we are already attached to this exact client, do nothing
+   if existing_client and existing_client.id == tailwind_lsp_client.id then
       return
    end
 
@@ -224,10 +244,20 @@ function M.buf_attach(bufnr)
       M.update_highlight(bufnr)
    end, 200)
 
+   -- the buffer hook is only installed once; if the lsp client was restarted
+   -- (and got a new id) we just refreshed the stored client above and can
+   -- reuse the existing hook
+   if HOOKED_BUFFERS[bufnr] then
+      return
+   end
+
    -- setup a hook for any changes in the buffer
-   vim.api.nvim_buf_attach(bufnr, false, {
+   local hooked = vim.api.nvim_buf_attach(bufnr, false, {
       on_lines = function(event_type, buf, changed_tick, firstline, lastline, new_lastline)
          if not ATTACHED_BUFFERS[bufnr] then
+            -- the buffer was detached (e.g. via :TailwindColorsDetach); drop
+            -- the listener on the next change
+            HOOKED_BUFFERS[bufnr] = nil
             return true
          end
 
@@ -240,11 +270,18 @@ function M.buf_attach(bufnr)
       end,
       on_detach = function()
          M.buf_detach(bufnr)
+         HOOKED_BUFFERS[bufnr] = nil
       end,
       on_reload = function()
          M.update_highlight(bufnr)
       end,
    })
+
+   -- nvim_buf_attach returns false if the buffer couldn't be attached, so only
+   -- remember the hook as installed when it actually was
+   if hooked then
+      HOOKED_BUFFERS[bufnr] = true
+   end
 end
 
 -- Detaches from the buffer
