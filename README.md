@@ -135,7 +135,8 @@ local user_config = {
   },
   commands = true, -- should add commands
   notify = true, -- should show notifications
-  auto_attach = false -- should automatically attach on LspAttach
+  auto_attach = false, -- should automatically attach on LspAttach
+  skip_patterns = {} -- buffer name patterns to skip attaching to
 }
 ```
 
@@ -189,6 +190,23 @@ quickfix, help, terminal, ...). Note that the autocmd only exists once
 
 With `auto_attach` enabled you no longer need to call `buf_attach` in your
 `on_attach`, but the commands and manual calls keep working.
+
+> Skipping buffers
+
+Some plugins create "virtual" buffers that look like regular files but can't be
+highlighted reliably. `skip_patterns` is a list of Lua patterns matched against
+the buffer name; `buf_attach` ignores any buffer whose name matches (this also
+applies to manual attaches and the commands):
+
+```lua
+require("tailwindcss-colors").setup({
+  skip_patterns = { "^fugitive://" }
+})
+```
+
+For example, fugitive revision buffers (`:Gedit HEAD:file`, `:Gdiffsplit`) have
+an empty `buftype`, so they aren't filtered out by the built-in guard and need a
+name-based pattern like the one above.
 
 ## Commands
 

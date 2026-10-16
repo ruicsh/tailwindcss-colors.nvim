@@ -19,6 +19,7 @@ local user_config = {
    commands = true, -- should add commands
    notify = true, -- should show notifications
    auto_attach = false, -- should automatically attach on LspAttach
+   skip_patterns = {}, -- buffer name patterns to skip attaching to
 }
 
 -- Emits a notification unless notifications have been disabled via the
@@ -200,6 +201,16 @@ function M.buf_attach(bufnr, client)
    -- prompt, ...) since the lsp client can't reliably highlight them
    if vim.bo[bufnr].buftype ~= "" then
       return
+   end
+
+   -- skip buffers whose name matches any configured pattern. Unlike `buftype`,
+   -- this also catches "virtual" buffers that keep an empty buftype, such as
+   -- fugitive revision buffers (e.g. :Gedit HEAD:file, :Gdiffsplit)
+   local name = vim.api.nvim_buf_get_name(bufnr)
+   for _, pattern in ipairs(user_config.skip_patterns) do
+      if name:match(pattern) then
+         return
+      end
    end
 
    -- prefer the client handed to us; otherwise find the tailwindcss client
