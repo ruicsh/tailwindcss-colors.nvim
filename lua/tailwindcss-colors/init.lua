@@ -19,10 +19,6 @@ local user_config = {
    commands = true, -- should add commands
 }
 
--- Reference to the current tailwindcss-langauge-server client
---- @class vim.lsp.Client
-local tailwind_lsp_client
-
 -- Creates highlights if they don't already exist
 local function create_highlight(color)
    -- pull highlight from cache if it exists to avoid neovim highlight commands
@@ -53,7 +49,7 @@ local function create_highlight(color)
    return highlight_name
 end
 
--- Stores attached buffers
+-- Maps each attached buffer to its tailwindcss lsp client (one client per project root)
 local ATTACHED_BUFFERS = {}
 
 local function buf_set_highlights(bufnr, lsp_data, change_data)
@@ -137,13 +133,14 @@ end
 
 -- Updates the highlights in a buffer if the lsp responds with valid color data
 function M.update_highlight(bufnr, change_data)
-   -- validate bufnr
-   if ATTACHED_BUFFERS[bufnr] ~= true then
+   -- validate bufnr and get its tailwindcss client
+   local client = ATTACHED_BUFFERS[bufnr]
+   if not client then
       return
    end
 
-   -- check if lsp is till attached?
-   if not vim.lsp.buf_is_attached(bufnr, tailwind_lsp_client.id) then
+   -- check if lsp is still attached
+   if not vim.lsp.buf_is_attached(bufnr, client.id) then
       vim.defer_fn(function()
          vim.notify "tailwindcss-colors: current buffer is not attached to tailwindcss lsp client"
       end, 0)
@@ -154,7 +151,7 @@ function M.update_highlight(bufnr, change_data)
    local params = { textDocument = vim.lsp.util.make_text_document_params() }
 
    -- send this to the lsp client
-   tailwind_lsp_client:request("textDocument/documentColor", params, function(err, result, _, _)
+   client:request("textDocument/documentColor", params, function(err, result, _, _)
       -- if there were no errors, update highlights
       if err == nil and result ~= nil then
          buf_set_highlights(bufnr, result, change_data)
@@ -167,27 +164,24 @@ function M.buf_attach(bufnr)
    bufnr = expand_bufnr(bufnr)
 
    -- if we have already attached to this buffer do nothing
-   if ATTACHED_BUFFERS[bufnr] == true then
+   if ATTACHED_BUFFERS[bufnr] then
       return
    end
 
+   -- find the tailwindcss client attached to THIS buffer (there may be several,
+   -- one per project root, so we can't cache a single global client)
+   local tailwind_lsp_client
+   for _, client in ipairs(vim.lsp.get_clients { buffer = bufnr }) do
+      if client.name == "tailwindcss" then
+         tailwind_lsp_client = client
+         break
+      end
+   end
+
+   -- if we couldn't find it, don't attach
    if not tailwind_lsp_client then
-      -- try to find the client
-      local clients = vim.lsp.get_clients { buffer = bufnr }
-
-      -- store a reference to the client
-      for _, client in pairs(clients) do
-         if client.name == "tailwindcss" then
-            tailwind_lsp_client = client
-            break
-         end
-      end
-
-      -- if we couldn't find it, don't attach
-      if not tailwind_lsp_client then
-         vim.notify "tailwindcss-colors: can't find tailwindcss lsp client at all (you sure it's loaded?)"
-         return
-      end
+      vim.notify "tailwindcss-colors: can't find tailwindcss lsp client at all (you sure it's loaded?)"
+      return
    end
 
    -- if current buffer is not attached to the client, do nothing
@@ -196,7 +190,7 @@ function M.buf_attach(bufnr)
       return
    end
 
-   ATTACHED_BUFFERS[bufnr] = true
+   ATTACHED_BUFFERS[bufnr] = tailwind_lsp_client
 
    -- 200ms debounce workaround, the server needs some time go get ready
    -- not deferring for 200ms results in the server not responding at all
@@ -207,7 +201,7 @@ function M.buf_attach(bufnr)
    -- setup a hook for any changes in the buffer
    vim.api.nvim_buf_attach(bufnr, false, {
       on_lines = function(event_type, buf, changed_tick, firstline, lastline, new_lastline)
-         if ATTACHED_BUFFERS[bufnr] ~= true then
+         if not ATTACHED_BUFFERS[bufnr] then
             return true
          end
 
@@ -246,7 +240,7 @@ end
 function M.buf_toggle()
    local bufnr = expand_bufnr(0)
 
-   if ATTACHED_BUFFERS[bufnr] == true then
+   if ATTACHED_BUFFERS[bufnr] then
       M.buf_detach(bufnr)
       return
    end
