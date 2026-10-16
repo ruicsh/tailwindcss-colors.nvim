@@ -17,7 +17,17 @@ local user_config = {
       light = "#FFFFFF", -- light text color
    },
    commands = true, -- should add commands
+   notify = true, -- should show notifications
+   auto_attach = false, -- should automatically attach on LspAttach
 }
+
+-- Emits a notification unless notifications have been disabled via the
+-- `notify` config option (set `notify = false` in setup to silence them)
+local function notify(msg)
+   if user_config.notify ~= false then
+      vim.notify(msg)
+   end
+end
 
 -- Creates highlights if they don't already exist
 local function create_highlight(color)
@@ -121,6 +131,22 @@ function M.setup(plugin_config)
    -- merge passed in settings with defaults
    user_config = merge(user_config, plugin_config or {})
 
+   -- optionally attach to buffers as soon as the tailwindcss lsp client
+   -- attaches. This is opt-in because the plugin is otherwise manual (you
+   -- either wire buf_attach into on_attach yourself, or use the commands)
+   if user_config.auto_attach then
+      local group = vim.api.nvim_create_augroup("tailwindcss-colors", { clear = true })
+      vim.api.nvim_create_autocmd("LspAttach", {
+         group = group,
+         callback = function(args)
+            local client = vim.lsp.get_clients({ id = args.data.client_id })[1]
+            if client and client.name == "tailwindcss" then
+               M.buf_attach(args.buf, client)
+            end
+         end,
+      })
+   end
+
    -- TODO: don't add commands at all if they are disabled (add them here?)
    -- remove commands if they should be disabled
    if not user_config.commands then
@@ -142,7 +168,7 @@ function M.update_highlight(bufnr, change_data)
    -- check if lsp is still attached
    if not vim.lsp.buf_is_attached(bufnr, client.id) then
       vim.defer_fn(function()
-         vim.notify "tailwindcss-colors: current buffer is not attached to tailwindcss lsp client"
+         notify "tailwindcss-colors: current buffer is not attached to tailwindcss lsp client"
       end, 0)
       return
    end

@@ -133,7 +133,9 @@ local user_config = {
     dark = "#000000",  -- dark text color
     light = "#FFFFFF", -- light text color
   },
-  commands = true -- should add commands
+  commands = true, -- should add commands
+  notify = true, -- should show notifications
+  auto_attach = false -- should automatically attach on LspAttach
 }
 ```
 
@@ -154,6 +156,39 @@ require("tailwindcss-colors").setup({
   commands = false
 })
 ```
+
+To silence the plugin's notifications (for example, the occasional
+"current buffer is not attached to tailwindcss lsp client" message that can
+appear when the language server restarts), pass `notify = false`:
+
+```lua
+require("tailwindcss-colors").setup({
+  notify = false
+})
+```
+
+> Automatic attachment
+
+By default the plugin does nothing until you wire `buf_attach` into your lsp
+`on_attach` function (see [Enabling the plugin](#enabling-the-plugin)) or run
+`:TailwindColorsAttach`. If you'd rather have the plugin attach by itself
+whenever the tailwindcss language server attaches to a buffer, enable
+`auto_attach`:
+
+```lua
+require("tailwindcss-colors").setup({
+  auto_attach = true
+})
+```
+
+This registers an `LspAttach` autocmd that attaches to any buffer whose
+`tailwindcss` client just attached, skipping non-normal buffers (nofile,
+quickfix, help, terminal, ...). Note that the autocmd only exists once
+`setup()` has run, so if you lazy-load the plugin, make sure it is loaded
+(eagerly, or early enough) for the first buffer you open.
+
+With `auto_attach` enabled you no longer need to call `buf_attach` in your
+`on_attach`, but the commands and manual calls keep working.
 
 ## Commands
 
